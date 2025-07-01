@@ -40,3 +40,4 @@ scikit-learn
 plotly
 matplotlib
 transformers
+option_menu
