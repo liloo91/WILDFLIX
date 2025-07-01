@@ -1,0 +1,22 @@
+{
+    "admin": {
+        "password": "admin",
+        "role": "admin"
+    },
+    "test": {
+        "password": "test",
+        "role": "user"
+    },
+    "test2": {
+        "password": "test2",
+        "role": "user"
+    },
+    "lol": {
+        "password": "lol",
+        "role": "user"
+    },
+    "AGNAOU": {
+        "password": "AGNAOU",
+        "role": "user"
+    }
+}
