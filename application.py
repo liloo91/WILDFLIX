@@ -8,9 +8,15 @@ from sklearn.neighbors import NearestNeighbors
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import numpy as np
+from transformers import pipeline
+from sklearn.metrics.pairwise import cosine_similarity
+import plotly.express as px
+from streamlit_option_menu import option_menu
 
+
+######################################### CONFIGURATION DE LA PAGE ###############################################
 # --- Configuration de la page ---
-st.set_page_config(page_title="WildFlix", layout="wide")
+st.set_page_config(page_title="WildFlix", layout="wide") # Pour définir le titre de l’onglet dans le navigateur (en haut de la fenêtre). Le layout permet d'étendre l'application sur toute la largeur.
 
 # --- STYLE CSS personnalisé ---
 st.markdown("""
@@ -34,26 +40,68 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Fichier JSON où stocker les utilisateurs
-USER_FILE = "users1.json"
 
-# Fonction de sauvegarde des utilisateurs
-def save_users(users):
-    with open(USER_FILE, "w") as f:
-        json.dump(users, f, indent=4)
 
-# Fonction de chargement des utilisateurs
-def load_users():
-    try:
-        with open(USER_FILE, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
+################################### TRADUCTION #######################################################
 
-#  Initialisation
-if "USERS" not in st.session_state:
-    st.session_state.USERS = load_users()
+# --- LANGUES ---
+drapeau = {
+        "Français": {"fr": "https://upload.wikimedia.org/wikipedia/en/c/c3/Flag_of_France.svg"},
+        "Anglais": {"en": "https://upload.wikimedia.org/wikipedia/en/a/ae/Flag_of_the_United_Kingdom.svg"}
+        }
 
+TRANSLATIONS = {
+    "Francais": {
+        "login_title": "Connexion à la plateforme",
+        "username": "Nom d'utilisateur",
+        "password": "Mot de passe",
+        "connect": "🔑 Se connecter",
+        "create_account": "🆕 Créer un compte",
+        "logout": "Se déconnecter",
+        "search_title": "🔎 RECHERCHER UN FILM PAR TITRE",
+        "recommendation_method": "Méthode de recommandation :",
+        "recommended_for": "🎯 Films recommandés pour :",
+        "synopsis": "SYNOPSIS :",
+        "no_recommendation": "Aucune recommandation trouvée pour ce film.",
+        "register_title": "Création de Compte",
+        "email": "Adresse Mail",
+        "register_button": "✅ Enregistrer",
+        "back_to_login": "↩️ Retour Connexion",
+        "username_taken": "Ce nom d'utilisateur est déjà pris.",
+        "account_created": "Compte créé avec succès ! Vous pouvez maintenant vous connecter.",
+        "login_success": "Connexion réussie !",
+        "wrong_password": "Mot de passe incorrect.",
+        "wrong_id": "Identifiant incorrect.",
+        "titre_page_utilisateur": "WildFlix, l'univers du cinéma réuni grâce à la donnée !"
+    },
+    "Anglais": {
+        "login_title": "Login to platform",
+        "username": "Username",
+        "password": "Password",
+        "connect": "🔑 Login",
+        "create_account": "🆕 Create an account",
+        "logout": "Logout",
+        "search_title": "🔎 SEARCH FOR A MOVIE BY TITLE",
+        "recommendation_method": "Recommendation method:",
+        "recommended_for": "🎯 Recommended movies for:",
+        "synopsis": "SYNOPSIS:",
+        "no_recommendation": "No recommendations found for this movie.",
+        "register_title": "Create Account",
+        "email": "Email address",
+        "register_button": "✅ Register",
+        "back_to_login": "↩️ Back to Login",
+        "username_taken": "This username is already taken.",
+        "account_created": "Account successfully created! You can now log in.",
+        "login_success": "Login successful!",
+        "wrong_password": "Incorrect password.",
+        "wrong_id": "Incorrect username.",
+        "titre_page_utilisateur": "WildFlix, where is bryan"
+    }
+}
+
+# --- SESSION ---
+if "lang" not in st.session_state:
+    st.session_state.lang = "Francais"
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "role" not in st.session_state:
@@ -61,52 +109,85 @@ if "role" not in st.session_state:
 if "show_registration" not in st.session_state:
     st.session_state.show_registration = False
 
-#  Inscription
-if st.session_state.get("show_registration", False):
-    st.markdown("<h1 style='font-size:100px;color:red;'>WildFlix</h1>", unsafe_allow_html=True)
-    st.markdown("<h1 style='font-size:30px;color:white;'>Création de Compte</h1>", unsafe_allow_html=True)
+# --- TRADUCTION ---
+def _(key):
+    return TRANSLATIONS.get(st.session_state.lang, {}).get(key, key)
 
-    new_username = st.text_input("Nom d'utilisateur", key="register_username")
-    new_password = st.text_input("Mot de passe", type="password", key="register_password")
-    new_mail = st.text_input("Adresse Mail", key="register_email")
+# --- LANG SELECT (user only) ---
+if "role" in st.session_state and st.session_state.role != "admin":
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.markdown("Selectionner votre langue", )
+        st.selectbox("Traduction", ["Francais", "Anglais"], index=["Francais", "Anglais"].index(st.session_state.lang), key="lang")
 
-    if st.button("✅ Enregistrer"):
-        if new_username in st.session_state.USERS:
-            st.error("Ce nom d'utilisateur est déjà pris.")
-        else:
-            st.session_state.USERS[new_username] = {"password": new_password, "role": "user"}
-            save_users(st.session_state.USERS)
-            st.success("Compte créé avec succès ! Vous pouvez maintenant vous connecter.")
+# --- USER FILE ---
+USER_FILE = "users1.json"
 
-    if st.button("↩️ Retour Connexion"):
-        st.session_state.show_registration = False
-        st.rerun()
+def save_users(users):
+    with open(USER_FILE, "w") as f:
+        json.dump(users, f, indent=4)
 
-#  Connexion
-def login():
-    st.markdown("<h1 style='font-size:100px;color:red;'>WildFlix</h1>", unsafe_allow_html=True)
-    st.markdown("<h1 style='font-size:30px;color:white;'>Connexion requise pour accéder à la plateforme</h1>", unsafe_allow_html=True)
+def load_users():
+    try:
+        with open(USER_FILE, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
 
-    username = st.text_input("Nom d'utilisateur", key="login_username")
-    password = st.text_input("Mot de passe", type="password", key="login_password")
+if "USERS" not in st.session_state:
+    st.session_state.USERS = load_users()
 
-    if st.button("🔑 Se connecter"):
-        if username in st.session_state.USERS:
-            stored_password = st.session_state.USERS[username]["password"]
-            if password == stored_password:
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                st.session_state.role = st.session_state.USERS[username]["role"]
-                st.success("Connexion réussie !")
-                st.rerun()
+# --- INSCRIPTION ---
+if st.session_state.show_registration:
+    col1, col2, col3 = st.columns(3)
+    with col2:
+        st.markdown("<h1 style='font-size:100px;color:red;'>WildFlix</h1>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='font-size:30px;color:white;'>{_('register_title')}</h1>", unsafe_allow_html=True)
+
+        new_username = st.text_input(_("username"), key="register_username")
+        new_password = st.text_input(_("password"), type="password", key="register_password")
+        new_mail = st.text_input(_("email"), key="register_email")
+
+        if st.button(_("register_button")):
+            if new_username in st.session_state.USERS:
+                st.error(_("username_taken"))
             else:
-                st.error("Mot de passe incorrect.")
-        else:
-            st.error("Identifiant incorrect.")
+                st.session_state.USERS[new_username] = {"password": new_password, "role": "user"}
+                save_users(st.session_state.USERS)
+                st.success(_("account_created"))
 
-    if st.button("🆕 Créer un compte"):
-        st.session_state.show_registration = True
-        st.rerun()
+        if st.button(_("back_to_login")):
+            st.session_state.show_registration = False
+            st.rerun()
+
+# --- CONNEXION ---
+def login():
+    col1, col2, col3 = st.columns(3)
+    with col2:
+        st.markdown("<h1 style='font-size:100px;color:red;'>WildFlix</h1>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='font-size:30px;color:white;'>{_('login_title')}</h1>", unsafe_allow_html=True)
+
+        username = st.text_input(_("username"), key="login_username")
+        password = st.text_input(_("password"), type="password", key="login_password")
+
+        if st.button(_("connect")):
+            if username in st.session_state.USERS:
+                stored_password = st.session_state.USERS[username]["password"]
+                if password == stored_password:
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.role = st.session_state.USERS[username]["role"]
+                    st.success(_("login_success"))
+                    st.rerun()
+                else:
+                    st.error(_("wrong_password"))
+            else:
+                st.error(_("wrong_id"))
+
+        if st.button(_("create_account")):
+            st.session_state.show_registration = True
+            st.rerun()
+
 
 # --- Chargement du CSV ---
 @st.cache_data
@@ -118,15 +199,49 @@ def load_data():
         st.error("Fichier 'dataframe_final.csv' introuvable.")
         return pd.DataFrame()
 
+
+
 # --- Fonction ADMIN ---
 def admin_dashboard():
-    st.markdown("<h1 style='color:red;'>🎛️ Tableau de bord Administrateur</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='color:red;'>📊 TABLEAU DE BORD - WILDFLIX</h1>", unsafe_allow_html=True)
 
     df = pd.read_csv("dataframe_final.csv")
 
     # Menu latéral avec les 9 noms
     with st.sidebar:
-        choix = st.radio("Choisissez un graphique :", [
+        st.markdown("### 📊 Graphique interactif")
+        variable_x = st.selectbox("Axe X", df.columns, index=None, placeholder="Choisissez une variable X")
+        variable_y = st.selectbox("Axe Y", df.columns, index=None, placeholder="Choisissez une variable Y")
+        couleur = st.selectbox("Catégoriser par (optionnel)", ["Aucune"] + list(df.columns), index=None, placeholder="Choisissez une catégorie")
+        type_graphique = st.selectbox("Type de graphique :", ["Nuage de points", "Barres", "Ligne"], index=None, placeholder="Choisissez un graphique")
+
+    # Affichage conditionnel
+    if not variable_x or not variable_y or not type_graphique:
+        st.markdown("#### ⚠️ Renseigner des valeurs pour afficher votre graphique")
+        st.markdown("")
+        st.markdown("")
+    else:
+        if type_graphique == "Nuage de points":
+            fig = px.scatter(df, x=variable_x, y=variable_y, color=None if couleur == "Aucune" else couleur)
+        elif type_graphique == "Barres":
+            fig = px.bar(df, x=variable_x, y=variable_y, color=None if couleur == "Aucune" else couleur)
+        elif type_graphique == "Ligne":
+            fig = px.line(df, x=variable_x, y=variable_y, color=None if couleur == "Aucune" else couleur)
+
+        # Mise en forme
+        fig.update_layout(
+            title=f"{variable_y} en fonction de {variable_x}",
+            height=600,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(size=14)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    
+    with st.sidebar:
+        st.markdown("### 📊 Graphique Classique")
+        choix = st.selectbox("", [
             "Répartition des films par genre",
             "Répartition des films par réalisateur",
             "Répartition des films par acteur",
@@ -413,22 +528,36 @@ def admin_dashboard():
                 👤 {df.shape[0]} films
                 </div>
                 """, unsafe_allow_html=True)
+    st.markdown("### 📊 Graphique interactif")
+
 
     afficher_graphique(choix)
+
+    with st.sidebar:
+        df_user_show=pd.read_json("users1.json").transpose()
+        st.markdown("")
+        st.markdown("### 🔒 Base de donnée utilisateurs")
+        st.markdown("")
+        df_user_show = df_user_show.reset_index().rename(columns={"index": "nom_user"})
+        df_user_show = df_user_show[["nom_user", "role"]]
+        st.dataframe(df_user_show)
 
     if st.button("Se déconnecter"):
         st.session_state.authenticated = False
         st.rerun()
 
-# --- Fonction UTILISATEUR ---
+######
+
+#######
 def main_app():
-    st.markdown("<h1 style='font-size:34px;'>WildFlix, l'univers du cinéma réuni grâce à la Data !</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='font-size:34px;'>WildFlix, l'univers du cinéma réuni grâce à la donnée !</h1>", unsafe_allow_html=True)
+    st.markdown("")
 
     img_path = os.path.join(os.path.dirname(__file__), "intro1.png")
     if os.path.exists(img_path):
         with open(img_path, "rb") as file:
             data_url = base64.b64encode(file.read()).decode()
-            st.markdown(f'<img src="data:image/png;base64,{data_url}">', unsafe_allow_html=True)
+
     else:
         st.error("Le fichier 'intro1.png' est introuvable.")
 
@@ -443,56 +572,129 @@ def main_app():
 
     st.markdown("<p style='font-size:30px; color:white; font-weight:bold;'>🔎 RECHERCHER UN FILM PAR TITRE</p>", unsafe_allow_html=True)
     titres_films = data['titre'].dropna().sort_values().unique().tolist()
-    search = st.selectbox("", titres_films, key="search_title")
+    film_choisi = st.selectbox("", titres_films, key="search_title")
 
-    if search:
-        results = data[data["titre"].str.contains(search, case=False, na=False)]
+    results = data[data["titre"]==film_choisi] 
+
+    if st.button("traduction du synopsis"):
+        modelTraductionFrancaisAnglais = pipeline("translation", model="Helsinki-NLP/opus-mt-en-fr")
+        traduction_clique = True
     else:
-        results = pd.DataFrame()
+        traduction_clique = False
 
-    if not results.empty:
-        for _, row in results.iterrows():
-            st.markdown(f"### 🎬 {row['titre']}")
-            if 'synopsis' in row and pd.notna(row['synopsis']):
-                st.markdown("<p style='color:white;'>SYNOPSIS : </p>", unsafe_allow_html=True)
-                st.markdown(f"<p style='color:white; text-align:justify;'>{row['synopsis']}</p>", unsafe_allow_html=True)
-            if pd.notna(row.get('affiche')) and str(row['affiche']).startswith("http"):
-                st.image(row['affiche'], use_container_width=True)
+    for _, row in results.iterrows(): 
+        if traduction_clique:
+            synopsis = modelTraductionFrancaisAnglais(row["synopsis"])[0]["translation_text"]
+        else:
+            synopsis = row['synopsis']
+        st.markdown(f"<p style='color:white; text-align:left;font-weight:bold;font-size:30px ;'>🎬 TITRE :  {row['titre']} </p>", unsafe_allow_html=True)
+        st.markdown("<p style='color:white; font-size:30px;text-align:left ;font-weight:bold;'>📖 SYNOPSIS :</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:white; text-align:justify;'>{synopsis}</p>", unsafe_allow_html=True)
+        a,b,c = st.columns([1,1,1])
+        with b:
+            st.image(row['affiche'],use_container_width="always")
+        with c:
+            st.markdown(f"<p style='color:white; text-align:justify;'> Nom du réalisateur : {row["nom_du_realisateur_1"]}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color:white; text-align:justify;'> Genre(s) : {row["genre_1"], row["genre_2"], row["genre_3"]}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color:white; text-align:justify;'> Acteur(s) : {row["acteur1"], row["acteur2"], row["acteur3"]}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color:white; text-align:justify;'> Date de sortie : {row["année_de_sortie"]}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color:white; text-align:justify;'> Classification : {row["classification"]}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color:white; text-align:justify;'> Note WildFlix : {int(row['note_wildflix'])}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color:white; text-align:justify;'> Durée : {int(row['durée'])} min</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color:white; text-align:justify;'> Type : {row["Type"]}</p>", unsafe_allow_html=True)
 
-    try:
+
+
+        # RECOMMANDATION DU FILM VIA NearestNeighbors/
+        # Préparation des données (en dehors de la fonction si possible pour optimiser)
+
+        # Chargement des données encodées
         df_encoded = pd.read_csv("version_globale_encodee.csv")
-        model = NearestNeighbors(n_neighbors=6).fit(df_encoded.drop("titre", axis=1).values)
+        X = df_encoded.drop("titre", axis=1).values
+        titles = df_encoded["titre"].tolist()
 
-        def recommander_films(titre):
-            if titre not in df_encoded['titre'].values:
+        # Chargement des données originales pour l'affichage
+        data = pd.read_csv("dataframe_final.csv")
+
+        # Calcul de la similarité cosinus
+        similarite_cosine = cosine_similarity(X)
+
+        # Création du modèle KNN
+        modele_knn = NearestNeighbors(n_neighbors=6)
+        modele_knn.fit(X)
+
+        # Interface utilisateur
+        st.markdown("<p style='color:white; font-size:20px;text-align:left ;font-weight:bold;'>📖 Choix des recommandations :</p>", unsafe_allow_html=True)
+        choix_algo = option_menu(
+        menu_title=None,                # pas de titre
+        options=["Les films les plus proches", "Les films qui ressemblent le plus"],
+        icons=["film", "star"],         # icônes FontAwesome
+        menu_icon="cast",
+        default_index=0,
+        orientation="horizontal",
+        styles={                        # tout en blanc sur fond sombre
+            "container": {"background-color": "#111"},
+            "nav-link": {"font-size": "16px", "color": "white"},
+            "nav-link-selected": {"background-color": "#005f73", "color": "white"}
+        }
+        )
+
+        st.write("Tu as choisi :", choix_algo)
+
+        # Fonction de recommandation
+        def recommander_films(titre, methode="Les films les plus proches"):
+            if titre not in titles:
                 return []
-            idx = df_encoded.index[df_encoded['titre'] == titre][0]
-            _, indices = model.kneighbors(df_encoded.drop("titre", axis=1).iloc[idx].values.reshape(1, -1))
-            return df_encoded.loc[indices[0][1:], 'titre'].tolist()
 
-        recommandations = recommander_films(search)
-        if recommandations:
-            st.markdown("<h2 style='color:white;'>🎯 Films recommandés :</h2>", unsafe_allow_html=True)
+            idx = titles.index(titre)
+
+            if methode == "Les films les plus proches":
+                _, indices = modele_knn.kneighbors([X[idx]])
+                voisins = indices[0][1:]  # On exclut le film lui-même
+                return voisins.tolist()
+            else:
+                scores = list(enumerate(similarite_cosine[idx]))
+                scores = sorted(scores, key=lambda x: x[1], reverse=True)
+                voisins = [i for i, _ in scores[1:6]]  # On exclut le film lui-même
+                return voisins
+
+        # Obtenir les recommandations
+        recommandations = recommander_films(film_choisi, methode=choix_algo)
+
+        # Affichage des recommandations
+        if len(recommandations) > 0:
+            st.markdown(f"<h2 style='color:white;'>🎯 Films recommandés pour : <em>{film_choisi}</em></h2>", unsafe_allow_html=True)
             cols = st.columns(5)
-            for i, titre in enumerate(recommandations[:5]):
-                with cols[i]:
-                    st.markdown(f"**{titre}**")
-                    try:
-                        poster = r.get(f"http://www.omdbapi.com/?t={titre}&apikey=548c959e").json().get("Poster")
-                        if poster and poster.startswith("http"):
-                            st.image(poster)
+
+            for i, idx in enumerate(recommandations):
+                if idx < len(data):  # Vérifie que l'index existe dans le DataFrame
+                    with cols[i % 5]:  # Organiser les films sur une ligne
+                        film = data.iloc[idx]
+                        st.markdown(f"### 🎬 {film['titre']}")
+                        st.image(film['affiche'], use_container_width=True)
+                        st.markdown("<p style='color:white;'>SYNOPSIS :</p>", unsafe_allow_html=True)
+                        if traduction_clique:
+                            synopsis = modelTraductionFrancaisAnglais(film["synopsis"])[0]["translation_text"]
+                            st.text("")
+                            st.text("")
                         else:
-                            st.markdown("*Pas d'affiche*")
-                    except:
-                        st.markdown("*Erreur*")
-    except:
-        st.warning("Erreur lors des recommandations.")
+                            synopsis = row['synopsis']
+                        st.markdown(f"<p style='color:white; text-align:justify;'>{synopsis}</p>", unsafe_allow_html=True)
+                        st.text("")
+                        st.text("")
+        else:
+            st.warning("Aucune recommandation trouvée pour ce film.")
 
-    if st.button("Se déconnecter"):
-        st.session_state.authenticated = False
-        st.rerun()
 
-# --- ROUTAGE PRINCIPAL ---
+        col1, col2, col3, col4,col5 = st.columns(5)
+        with col1:
+            if st.button("Se déconnecter"):
+                st.text("")
+                st.text("")
+                st.session_state.authenticated = False
+                st.rerun()
+
+
 if st.session_state.authenticated:
     if st.session_state.role == "admin":
         admin_dashboard()
@@ -500,3 +702,8 @@ if st.session_state.authenticated:
         main_app()
 else:
     login()
+
+# --- ROUTAGE PRINCIPAL ---
+st.text(" ")
+st.text(" ")
+
