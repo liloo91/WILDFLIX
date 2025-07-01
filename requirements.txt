@@ -44,3 +44,4 @@ plotly
 matplotlib
 pipeline
 transformers
+streamlit_option_menu
